@@ -1,0 +1,35 @@
+[project]
+name = "interpretability_toolkit"
+version = "0.1.0"
+description = "An interface to generate attributions heatmaps from deeplearning models"
+dependencies = [
+    "captum",
+    "torch",
+    "torchvision",
+    "kornia",
+    "scikit-image",
+    "numpy",
+    "opencv-python-headless",
+    "matplotlib",
+    "scikit-learn",
+    "scipy",
+    "tqdm",
+    "attrs",
+    "timm",
+    "jaxtyping",
+]
+readme = "README.md"
+
+[project.optional-dependencies]
+dev = ["black", "ruff", "pre-commit"]
+
+notebook = ["ipykernel", "matplotlib"]
+
+[tool.black]
+line-length = 120
+
+[tool.ruff]
+line-length = 120
+select = ["E", "F", "I", "RUF", "TCH"]
+fixable = ["I", "RUF100", "TCH"]
+fix = true
