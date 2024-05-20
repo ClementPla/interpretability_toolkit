@@ -18,4 +18,4 @@ pip install .
 
 ## Basic usecase
 
-[See notebook](notebooks/interpretability.ipynb)
+[See notebook (noteboks/interpretability.ipynb)](notebooks/interpretability.ipynb)
