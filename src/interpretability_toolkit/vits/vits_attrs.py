@@ -5,13 +5,13 @@ from timm.models.vision_transformer import Attention, VisionTransformer
 
 class ViTAttribution:
     @staticmethod
-    def attribute(model, x, method="rollout", **kwargs):
+    def attribute(model, x, method="rollout", as_regression=False, **kwargs):
         match method:
             case "rollout":
                 kwargs.pop("output", None)
                 return ViTAttribution.attention_rollout(model, x, **kwargs)
             case "chefer":
-                return ViTAttribution.chefer_attribution(model, x, **kwargs)
+                return ViTAttribution.chefer_attribution(model, x, as_regression=as_regression, **kwargs)
 
     @staticmethod
     @torch.no_grad()
@@ -76,12 +76,12 @@ class ViTAttribution:
         return rollout
 
     @staticmethod
-    def chefer_attribution(model, x, **kwargs):
+    def chefer_attribution(model, x, as_regression=False, **kwargs):
         assert isinstance(model, VisionTransformer), "Model must be a Vision Transformer"
         assert hasattr(model, "cls_token"), "Model must have classification token"
 
         attns, grad_attns = ViTAttribution.get_attention_matrices_with_gradients(
-            model, x, output=kwargs.pop("output", None)
+            model, x, as_regression=as_regression, output=kwargs.pop("output", None)
         )
         As = [ViTAttribution.avg_heads(a, g) for a, g in zip(attns, grad_attns)]
         return ViTAttribution.get_rollout(As, mode="chefer", num_prefix_tokens=model.num_prefix_tokens, **kwargs)
@@ -108,7 +108,7 @@ class ViTAttribution:
             h.remove()
         return attention_matrices
 
-    def get_attention_matrices_with_gradients(model, x, output=None):
+    def get_attention_matrices_with_gradients(model, x, output=None, as_regression=False):
         hooks = []
         grad_attention_matrices = []
         attention_matrices = []
@@ -131,8 +131,12 @@ class ViTAttribution:
 
         assert len(hooks) > 0, "No attention layers found"
         pred = model(x)
+        
         if output is None:
-            output = pred.argmax(dim=-1)
+            if as_regression:
+                output = torch.round(pred)
+            else:
+                output = pred.argmax(dim=-1)
         else:
             if not isinstance(output, torch.Tensor):
                 if isinstance(output, list):
@@ -141,7 +145,10 @@ class ViTAttribution:
                     output = torch.tensor([output], device=pred.device, dtype=pred.dtype)
                     output = output.repeat(pred.size(0))
 
-        l = F.cross_entropy(pred, output.long())
+        if as_regression:
+            l = F.mse_loss(pred.float(), output)
+        else:
+            l = F.cross_entropy(pred, output.long())
         l.backward(retain_graph=True)
         for h in hooks:
             h.remove()
