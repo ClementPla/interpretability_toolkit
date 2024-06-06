@@ -8,8 +8,29 @@ from timm.models.vision_transformer import VisionTransformer
 from tqdm import tqdm
 
 from interpretability_toolkit.vits.vits_attrs import ViTAttribution
+from interpretability_toolkit.vits.utils import _remove_all_forward_hooks
+from copy import deepcopy
 
-
+class DynamicViT(object):
+    def __init__(self, model: VisionTransformer) -> None:
+        self.model = model
+        self.initial_stride = model.patch_embed.proj.stride[0]
+        self.dynamic_img_size = model.dynamic_img_size
+        self.initial_positional_embedding = torch.nn.Parameter(model.pos_embed.clone())
+        self.patch_embed = deepcopy(model.patch_embed)
+        
+    def __enter__(self):
+        self.model.patch_embed.flatten = False
+        self.model.patch_embed.output_fmt = "NHWC"
+        self.model.dynamic_img_size = True
+        return self.model
+    def __exit__(self, type, value, traceback):
+        print("Restoring the model to its original state.")
+        self.model.dynamic_img_size = self.dynamic_img_size
+        self.model.patch_embed = self.patch_embed
+        self.model.pos_embed = self.initial_positional_embedding
+        _remove_all_forward_hooks(self.model)
+        
 class FocusedAttention:
     def __init__(
         self,
@@ -20,10 +41,8 @@ class FocusedAttention:
         dilate_tokens=False,
         attribution_method="rollout",
         noise_level=0.25,
-
     ):
         self.model = model
-
         self.sampling_points = sampling_points
         self.with_replacement = with_replacement
         self._indices = None
@@ -42,52 +61,43 @@ class FocusedAttention:
         output=None,
         **kwargs,
     ):
-        self.model: VisionTransformer
-
         initial_stride = self.model.patch_embed.proj.stride[0]
         powers = np.arange(0, np.log2(initial_stride) + 1)
         strides = (2**powers).astype(int)[::-1]
-        # strides = np.arange(1, initial_stride + 1, 2)[::-1]
-        self.model.patch_embed.flatten = False
-        self.model.patch_embed.output_fmt = "NHWC"
-        self.model.dynamic_img_size = True
-
-        if output is not None:
-            if not isinstance(output, torch.Tensor):
-                if isinstance(output, list):
-                    output = torch.tensor(output, device=x.device, dtype=x.dtype)
-                elif isinstance(output, int):
-                    output = torch.tensor([output], device=x.device, dtype=x.dtype)
-                    output = output.repeat(x.size(0))
-        for i, stride in enumerate(tqdm(strides)):
-            self.model.patch_embed.proj.stride = (stride, stride)
-            if i == 0:
-                rollout = ViTAttribution.attribute(
-                    self.model,
-                    x,
-                    output=output,
-                    method=self.attribution_method,
-                    reshape=False,
-                    **kwargs
-                )
-                self._attention_map = rollout
-            else:
-                K = math.ceil(self._t**i)
-                for j in range(K):
-                    self.start_one_iteration(
-                        x, output=output, **kwargs
+        strides = np.arange(1, initial_stride + 1, 1)[::-1]
+        with DynamicViT(self.model) as model:
+            if output is not None:
+                if not isinstance(output, torch.Tensor):
+                    if isinstance(output, list):
+                        output = torch.tensor(output, device=x.device, dtype=x.dtype)
+                    elif isinstance(output, int):
+                        output = torch.tensor([output], device=x.device, dtype=x.dtype)
+                        output = output.repeat(x.size(0))
+            for i, stride in enumerate(tqdm(strides)):
+                model.patch_embed.proj.stride = (stride, stride)
+                if i == 0:
+                    rollout = ViTAttribution.attribute(
+                        model,
+                        x,
+                        output=output,
+                        method=self.attribution_method,
+                        reshape=False,
+                        **kwargs
                     )
-                    if j == 0:
-                        lmaps = self._local_map / K
-                    else:
-                        lmaps += (self._local_map) / K
+                    self._attention_map = rollout
+                else:
+                    K = math.ceil(self._t**i)
+                    for j in range(K):
+                        self.start_one_iteration(
+                            x, output=output, **kwargs
+                        )
+                        if j == 0:
+                            lmaps = self._local_map / K
+                        else:
+                            lmaps += (self._local_map) / K
+                    self._attention_map = torch.maximum(self._attention_map, lmaps)
+                    self._local_map = None
 
-                self._attention_map = torch.maximum(self._attention_map, lmaps)
-                self._local_map = None
-
-        self.model.dynamic_img_size = False
-        self.model.patch_embed.flatten = True
-        self.model.patch_embed.proj.stride = (initial_stride, initial_stride)
         N = self._attention_map.size(-1)
         H = W = int(N**0.5)
         rollout = self._attention_map.view(-1, 1, H, W)

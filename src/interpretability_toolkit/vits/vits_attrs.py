@@ -7,7 +7,7 @@ class ViTAttribution:
     @staticmethod
     def attribute(model, x, method="rollout", as_regression=False, **kwargs):
         match method:
-            case "rollout":
+            case "rollout" | "attention_rollout":
                 kwargs.pop("output", None)
                 return ViTAttribution.attention_rollout(model, x, **kwargs)
             case "chefer":
