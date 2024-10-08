@@ -5,7 +5,7 @@ from skimage.filters import threshold_multiotsu, threshold_otsu
 from interpretability_toolkit.utils.tensors import normalize
 
 
-def plot_images_heatmaps(images, heatmaps, threshold=0.5, border_width=3, cmap="Reds", use_sigmoid=False):
+def plot_images_heatmaps(images, heatmaps, threshold=0.5, border_width=3, cmap="Reds", use_sigmoid=False, titles=None):
     if not isinstance(heatmaps, list):
         heatmaps = [heatmaps]
     b = images.shape[0]
@@ -47,7 +47,7 @@ def plot_images_heatmaps(images, heatmaps, threshold=0.5, border_width=3, cmap="
 
             axs[i, 1+j].get_xaxis().set_visible(False)
             axs[i, 1+j].get_yaxis().set_visible(False)
-
+            
             
     plt.subplots_adjust(wspace=0, hspace=0)
     return fig
